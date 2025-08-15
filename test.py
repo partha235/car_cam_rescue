@@ -1,0 +1,138 @@
+import camera as cam
+import network
+import gc
+from machine import Pin
+from utime import sleep_ms
+import uasyncio as asyncio
+try:
+    import usocket as socket
+except:
+    import socket
+
+# Garbage collection
+gc.collect()
+
+# Initialize camera
+try:
+    cam.init(0, format=cam.JPEG, fb_location=cam.PSRAM)
+    cam.framesize(cam.FRAME_QVGA)  # 320x240 for stability
+    cam.quality(15)  # Adjusted for memory
+    print("📷 Camera initialized")
+except Exception as e:
+    print("❌ Camera init failed:", e)
+
+# Flash LED pin
+led_pin = Pin(4, Pin.OUT, value=0)
+
+# WiFi credentials (Access Point mode)
+ssid = "wificar"
+password = "car@12345"
+
+# Connect to WiFi (AP mode)
+ap = network.WLAN(network.AP_IF)
+ap.active(True)
+ap.config(essid=ssid, password=password)
+ap.ifconfig(('192.168.4.23', '255.255.255.0', '192.168.4.23', '8.8.8.8'))
+
+# Wait for AP to be active
+while not ap.active():
+    print("📡 Starting AP...")
+    sleep_ms(1000)
+
+print("✅ AP active! IP:", ap.ifconfig()[0])
+sleep_ms(2000)
+
+# HTML page with fetch for LED control
+def web_page():
+    return """<html>
+    <head><title>Insect Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 30px; }
+        button { font-size: 18px; padding: 10px 20px; margin: 10px; }
+        img { width: 80%; max-width: 480px; height: auto; }
+    </style>
+    </head>
+    <body>
+        <h1>Insect Monitor</h1>
+        <img src="/stream" alt="Live stream"><br>
+        <h2>LED Control</h2>
+        <button onclick="toggleLed('on')">ON</button>
+        <button onclick="toggleLed('off')">OFF</button>
+        <script>
+            function toggleLed(state) {
+                fetch('/led?state=' + state)
+                    .then(response => response.text())
+                    .then(data => console.log(data))
+                    .catch(error => console.error('Error:', error));
+            }
+        </script>
+    </body>
+</html>"""
+
+# Handle HTTP requests
+async def handle_request(reader, writer):
+    try:
+        request = (await reader.read(1024)).decode()
+        print("🔍 Request from:", writer.get_extra_info('peername'))
+        print("🔍 Request content:", request)
+
+        # Stream endpoint
+        if 'GET /stream' in request:
+            await writer.awrite('HTTP/1.1 200 OK\r\n')
+            await writer.awrite('Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n')
+            while True:
+                try:
+                    img = cam.capture()
+                    if img:
+                        await writer.awrite(b'--frame\r\n')
+                        await writer.awrite(b'Content-Type: image/jpeg\r\n\r\n' + img + b'\r\n')
+                    await asyncio.sleep_ms(50)
+                except Exception as e:
+                    print("❌ Stream error:", e)
+                    break
+            await writer.aclose()
+            return
+
+        # LED ON
+        elif 'GET /led?state=on' in request:
+            led_pin.value(1)
+            print("💡 LED ON")
+            await writer.awrite('HTTP/1.1 200 OK\r\n')
+            await writer.awrite('Content-Type: text/plain\r\n\r\n')
+            await writer.awrite('LED On')
+            await writer.aclose()
+
+        # LED OFF
+        elif 'GET /led?state=off' in request:
+            led_pin.value(0)
+            print("💡 LED OFF")
+            await writer.awrite('HTTP/1.1 200 OK\r\n')
+            await writer.awrite('Content-Type: text/plain\r\n\r\n')
+            await writer.awrite('LED Off')
+            await writer.aclose()
+
+        # Root webpage
+        else:
+            response = web_page()
+            await writer.awrite('HTTP/1.1 200 OK\r\n')
+            await writer.awrite('Content-Type: text/html\r\n')
+            await writer.awrite('Connection: close\r\n\r\n')
+            await writer.awrite(response)
+            await writer.aclose()
+
+    except Exception as e:
+        print("❌ Request error:", e)
+        await writer.aclose()
+
+# Start async server
+async def main():
+    server = await asyncio.start_server(handle_request, '', 80)
+    print("🌐 Server started on http://192.168.4.23")
+    await server.wait_closed()
+
+# Run the server
+try:
+    asyncio.run(main())
+except Exception as e:
+    print("🔥 Main error:", e)

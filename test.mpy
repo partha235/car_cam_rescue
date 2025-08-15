@@ -1,0 +1,9 @@
+# for max30100 test
+from machine import Pin, SoftI2C
+
+print("checking")
+# I2C Configuration using SoftI2C
+sda = Pin(13)  # Define the SDA (Serial Data) pin for I2C communication
+scl = Pin(2)  # Define the SCL (Serial Clock) pin for I2C communication
+i2c = SoftI2C(scl=scl, sda=sda)  # Create an I2C instance using defined pins
+print(i2c.scan())

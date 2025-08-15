@@ -1,0 +1,123 @@
+import camera as cam
+try:
+    import usocket as socket
+except:
+    import socket
+from bps_cre import * 
+from utime import sleep_ms, sleep
+import network
+from machine import Pin, PWM
+import gc
+gc.collect()
+
+# Initialize camera
+cam.init(0, format=cam.JPEG)
+print("Camera initiated")
+
+# Initialize LED (GPIO 4 for ESP32-CAM flash LED, adjust if needed)
+led_pin = Pin(4, Pin.OUT)
+
+# Wi-Fi credentials
+# Wi-Fi credentials
+ssid = "hello"  # your network/hotspot/ssid name.
+password = "abi12345"    # your network/hotspot/ssid password.
+
+# Connect to Wi-Fi
+sta = network.WLAN(network.STA_IF)
+sta.active(True)
+sta.connect(ssid, password)
+
+while not sta.isconnected():
+    print("Connecting to WiFi...")
+    sleep_ms(1000)
+
+if sta.isconnected():
+    print("Connection status:", sta.isconnected())
+print("IP Address:", sta.ifconfig()[0])
+
+# HTML for web page with LED on/off buttons
+def web_page():
+    html = """<html>
+    <head>
+        <meta name="author" content="bps_explore">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Camera Monitor</title>
+        <link rel="shortcut icon" href="iconlogo.ico"/>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; }
+            button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+        </style>
+    </head>
+    <body>
+        <h1>Insect Monitor</h1>
+        <img src="/stream" alt="Video stream">
+        <h2>LED Control</h2>
+        <a href=\"?led=on\"><button>on</button></a>&nbsp;
+        <a href=\"?led=off\"><button>off</button></a>
+    </body>
+</html>
+"""
+    return html
+
+def send_image(conn):
+    img = cam.capture()
+    if img:  # Check if image capture was successful
+        conn.send(b'--frame\r\n')
+        conn.send(b'Content-Type: image/jpeg\r\n\r\n' + img + b'\r\n')
+    else:
+        print("Failed to capture image")
+
+# Set up socket server
+so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+so.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow socket reuse
+so.bind(("", 80))
+so.listen(3)
+so.settimeout(1.0)  # Non-blocking with 1-second timeout
+
+while True:
+    try:
+        conn, addr = so.accept()
+        conn.settimeout(3.0)
+        print('Got a connection from %s' % str(addr))
+        request = conn.recv(1024)
+        conn.settimeout(None)
+        request = str(request)
+        print('Content = %s' % request)
+
+        if 'GET /stream' in request:
+            conn.send('HTTP/1.1 200 OK\r\n')
+            conn.send('Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n')
+            try:
+                for _ in range(100):  # Limit to 100 frames to allow other requests
+                    send_image(conn)
+                    sleep_ms(100)
+                conn.close()
+                print('Stream ended')
+            except OSError as e:
+                conn.close()
+                print('Stream closed:', e)
+        elif 'GET /led' in request:
+            print("LED request received:", request)
+            if 'state=on' in request:
+                led_pin.value(1)
+                print("LED turned ON, Pin value:", led_pin.value())
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nLED On')
+            elif 'state=off' in request:
+                led_pin.value(0)
+                print("LED turned OFF, Pin value:", led_pin.value())
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nLED Off')
+            else:
+                print("Invalid LED request")
+                conn.send('HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid LED request')
+            conn.close()
+        else:
+            response = web_page()
+            conn.send('HTTP/1.1 200 OK\r\n')
+            conn.send('Content-Type: text/html\r\n')
+            conn.send('Connection: close\r\n\r\n')
+            conn.sendall(response)
+            conn.close()
+    except OSError as e:
+        print('No connection or error:', e)
+    sleep_ms(10)
+

@@ -1,0 +1,139 @@
+import camera as cam
+import network
+import gc
+from machine import Pin
+from utime import sleep_ms
+try:
+    import usocket as socket
+except:
+    import socket
+
+gc.collect()
+
+# Initialize camera
+try:
+    cam.init(0, format=cam.JPEG)
+    print("📷 Camera initialized")
+except Exception as e:
+    print("❌ Camera init failed:", e)
+
+# Flash LED pin
+led_pin = Pin(4, Pin.OUT)
+led=Pin(33,Pin.OUT)
+
+# WiFi credentials
+ssid = "hello"
+password = "abi12345"
+
+# Connect to WiFi
+sta = network.WLAN(network.STA_IF)
+sta.active(True)
+sta.connect(ssid, password)
+
+while not sta.isconnected():
+    print("📡 Connecting to WiFi...")
+    sleep_ms(1000)
+
+print("✅ Connected! IP:", sta.ifconfig()[0])
+for i in range(10):
+    led.value(not led.value())
+    sleep_ms(5000)
+# HTML page
+def web_page():
+    return """<html>
+    <head><title>Insect Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 30px; }
+        button { font-size: 18px; padding: 10px 20px; margin: 10px; }
+        img { width: 80%%; max-width: 480px; height: auto; }
+    </style>
+    </head>
+    <body>
+        <h1>Insect Monitor</h1>
+        <img src="/stream" alt="Live stream"><br>
+        <h2>LED Control</h2>
+        <a href="/led?state=on"><button>ON</button></a>
+        <a href="/led?state=off"><button>OFF</button></a>
+    </body>
+</html>"""
+
+# Image stream
+def send_image(conn):
+    img = cam.capture()
+    if img:
+        conn.send(b'--frame\r\n')
+        conn.send(b'Content-Type: image/jpeg\r\n\r\n' + img + b'\r\n')
+        return True
+    return False
+
+# Start socket server
+so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+so.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+so.bind(('', 80))
+so.listen(1)
+so.settimeout(0.1)
+
+streaming_conn = None
+
+while True:
+    try:
+        try:
+            led.off()
+            conn, addr = so.accept()
+            conn.settimeout(3.0)
+            print("📥 Request from:", addr)
+            request = conn.recv(1024).decode()
+            conn.settimeout(None)
+            print("🔍 Request content:", request)
+
+            # Stream endpoint
+            if 'GET /stream' in request:
+                if streaming_conn:
+                    streaming_conn.close()
+                streaming_conn = conn
+                conn.send('HTTP/1.1 200 OK\r\n')
+                conn.send('Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n')
+                continue
+
+            # LED ON
+            elif 'GET /led?state=on' in request:
+                led_pin.value(1)
+                print("💡 LED ON")
+                conn.send('HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n')
+                conn.close()
+
+            # LED OFF
+            elif 'GET /led?state=off' in request:
+                led_pin.value(0)
+                print("💡 LED OFF")
+                conn.send('HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n')
+                conn.close()
+
+            # Root webpage
+            else:
+                response = web_page()
+                conn.send('HTTP/1.1 200 OK\r\n')
+                conn.send('Content-Type: text/html\r\n')
+                conn.send('Connection: close\r\n\r\n')
+                conn.sendall(response)
+                conn.close()
+
+        except OSError as e:
+            if e.args[0] != 11:
+                print("❌ Accept error:", e)
+
+        # If streaming connection active
+        if streaming_conn:
+            try:
+                if not send_image(streaming_conn):
+                    print("⚠️ Failed to send image")
+                sleep_ms(50)
+            except OSError as e:
+                print("❌ Stream error:", e)
+                streaming_conn.close()
+                streaming_conn = None
+
+    except Exception as e:
+        print("🔥 Main loop error:", e)
+        sleep_ms(100)
