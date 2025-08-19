@@ -1,112 +1,25 @@
-<!DOCTYPE html>
 <html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<style>
-  .noselect {
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    -khtml-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
-  }
-
-  .slidecontainer {
-    width: 100%;
-  }
-
-  .slider {
-    -webkit-appearance: none;
-    width: 100%;
-    height: 15px;
-    border-radius: 5px;
-    background: #d3d3d3;
-    outline: none;
-    opacity: 0.7;
-    transition: opacity .2s;
-  }
-
-  .slider:hover {
-    opacity: 1;
-  }
-
-  .slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 25px;
-    height: 25px;
-    border-radius: 50%;
-    background: red;
-    cursor: pointer;
-  }
-
-  .slider::-moz-range-thumb {
-    width: 25px;
-    height: 25px;
-    border-radius: 50%;
-    background: red;
-    cursor: pointer;
-  }
-</style>
-</head>
-<body class="noselect" align="center" style="background-color:white">
-  
-  <table id="mainTable" style="width:400px;margin:auto;table-layout:fixed" cellspacing="10">
-    <tr>
-      <td colspan="3">
-        <img id="cameraImage" src="" style="width:400px;height:250px">
-      </td>
-    </tr>
-    <tr>
-      <td style="text-align:left"><b>Light:</b></td>
-      <td colspan="2">
-        <div class="slidecontainer">
-          <input type="range" min="0" max="255" value="0" class="slider" id="Light" oninput='sendLightValue(value)'>
-        </div>
-      </td>
-    </tr>
-  </table>
-
-  <script>
-    var webSocketCameraUrl = "ws://" + window.location.hostname + "/Camera";    
-    var webSocketLedUrl = "ws://" + window.location.hostname + "/LedControl";  
-    var websocketCamera;
-    var websocketLed;
-
-    function initCameraWebSocket() {
-      websocketCamera = new WebSocket(webSocketCameraUrl);
-      websocketCamera.binaryType = 'blob';
-      websocketCamera.onclose = function() {
-        setTimeout(initCameraWebSocket, 2000);
-      };
-      websocketCamera.onmessage = function(event) {
-        document.getElementById("cameraImage").src = URL.createObjectURL(event.data);
-      };
-    }
-
-    function initLedWebSocket() {
-      websocketLed = new WebSocket(webSocketLedUrl);
-      websocketLed.onclose = function() {
-        setTimeout(initLedWebSocket, 2000);
-      };
-    }
-
-    function initWebSockets() {
-      initCameraWebSocket();
-      initLedWebSocket();
-    }
-
-    function sendLightValue(value) {
-      if (websocketLed && websocketLed.readyState === WebSocket.OPEN) {
-        websocketLed.send("Light," + value);
-      }
-    }
-
-    window.onload = initWebSockets;
-    document.getElementById("mainTable").addEventListener("touchend", function(event) {
-      event.preventDefault();
-    });
-  </script>
-</body>
+    <head><title>Camera Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 30px; }
+        button { font-size: 18px; padding: 10px 20px; margin: 10px; }
+        img { width: 80%; max-width: 480px; height: auto; }
+    </style>
+    </head>
+    <body>
+        <h1>Camera Monitor</h1>
+        <img src="/stream" alt="Live stream"><br>
+        <h2>LED Control</h2>
+        <button onclick="toggleLed('on')">ON</button>
+        <button onclick="toggleLed('off')">OFF</button>
+        <script>
+            function toggleLed(state) {
+                fetch('/led?state=' + state)
+                    .then(response => response.text())
+                    .then(data => console.log(data))
+                    .catch(error => console.error('Error:', error));
+            }
+        </script>
+    </body>
 </html>

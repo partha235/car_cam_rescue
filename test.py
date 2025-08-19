@@ -32,6 +32,7 @@ password = "car@12345"
 ap = network.WLAN(network.AP_IF)
 ap.active(True)
 ap.config(essid=ssid, password=password)
+# declaring static IP
 ap.ifconfig(('192.168.4.23', '255.255.255.0', '192.168.4.23', '8.8.8.8'))
 
 # Wait for AP to be active
@@ -44,7 +45,8 @@ sleep_ms(2000)
 
 # HTML page with fetch for LED control
 def web_page():
-    return """<html>
+    return """<!DOCTYPE html>
+    <html>
     <head><title>Insect Monitor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>

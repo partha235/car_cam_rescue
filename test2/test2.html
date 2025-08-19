@@ -1,141 +1,40 @@
-<!DOCTYPE html>
 <html>
   <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <style>
-    .arrows {
-      font-size:40px;
-      color:red;
-    }
-    td.button {
-      background-color:black;
-      border-radius:25%;
-      box-shadow: 5px 5px #888888;
-    }
-    td.button:active {
-      transform: translate(5px,5px);
-      box-shadow: none; 
-    }
-
-    .noselect {
-      -webkit-touch-callout: none; /* iOS Safari */
-        -webkit-user-select: none; /* Safari */
-         -khtml-user-select: none; /* Konqueror HTML */
-           -moz-user-select: none; /* Firefox */
-            -ms-user-select: none; /* Internet Explorer/Edge */
-                user-select: none; /* Non-prefixed version, currently
-                                      supported by Chrome and Opera */
-    }
-
-    .slidecontainer {
-      width: 100%;
-    }
-
-    .slider {
-      -webkit-appearance: none;
-      width: 100%;
-      height: 15px;
-      border-radius: 5px;
-      background: #d3d3d3;
-      outline: none;
-      opacity: 0.7;
-      -webkit-transition: .2s;
-      transition: opacity .2s;
-    }
-
-    .slider:hover {
-      opacity: 1;
-    }
-  
-    .slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 25px;
-      height: 25px;
-      border-radius: 50%;
-      background: red;
-      cursor: pointer;
-    }
-
-    .slider::-moz-range-thumb {
-      width: 25px;
-      height: 25px;
-      border-radius: 50%;
-      background: red;
-      cursor: pointer;
-    }
-
+      body { font-family: Helvetica; text-align: center; background-color: white; margin: 0; }
+      h1 { margin-top: 20px; }
+      img { width: 80%; max-width: 480px; height: auto; }
+      .button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;
+                font-size: 24px; margin: 10px; cursor: pointer; }
+      .button-off { background-color: #555555; }
+      .status { font-size: 18px; color: #333; }
     </style>
-  
   </head>
-  <body class="noselect" align="center" style="background-color:white">
-     
-    <!--h2 style="color: teal;text-align:center;">Wi-Fi Camera &#128663; Control</h2-->
-    
-    <table id="mainTable" style="width:400px;margin:auto;table-layout:fixed" CELLSPACING=10>
-      <tr>
-        <img id="cameraImage" src="" style="width:400px;height:250px"></td>
-      </tr> 
-        
-      <tr>
-        <td style="text-align:left"><b>Light:</b></td>
-        <td colspan=2>
-          <div class="slidecontainer">
-            <input type="range" min="0" max="255" value="0" class="slider" id="Light" oninput='sendButtonInput("Light",value)'>
-          </div>
-        </td>   
-      </tr>
-    </table>
-  
+  <body class="noselect" align="center">
+    <h1>ESP32-CAM Insect Monitor</h1>
+    <p>This program tests web page streaming with AP mode and static IP.</p>
+    <img src="/stream" alt="Camera Stream">
+    <h2>LED Control (GPIO 2)</h2>
+    <p>LED State: <span id="ledState">off</span></p>
+    <button class="button" onclick="toggleLed('on')">ON</button>
+    <button class="button button-off" onclick="toggleLed('off')">OFF</button>
+    <p id="status" class="status">Status: Waiting for action</p>
     <script>
-      var webSocketCameraUrl = "ws:\/\/" + window.location.hostname + "/Camera";
-      var webSocketCarInputUrl = "ws:\/\/" + window.location.hostname + "/CarInput";      
-      var websocketCamera;
-      var websocketCarInput;
-      
-      function initCameraWebSocket() 
-      {
-        websocketCamera = new WebSocket(webSocketCameraUrl);
-        websocketCamera.binaryType = 'blob';
-        websocketCamera.onopen    = function(event){};
-        websocketCamera.onclose   = function(event){setTimeout(initCameraWebSocket, 2000);};
-        websocketCamera.onmessage = function(event)
-        {
-          var imageId = document.getElementById("cameraImage");
-          imageId.src = URL.createObjectURL(event.data);
-        };
+      function toggleLed(state) {
+        document.getElementById('status').textContent = 'Status: Sending ' + state;
+        fetch('/led?state=' + state, { method: 'GET' })
+          .then(response => response.text())
+          .then(data => {
+            console.log(data);
+            document.getElementById('ledState').textContent = state;
+            document.getElementById('status').textContent = 'Status: ' + data;
+          })
+          .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('status').textContent = 'Status: Error';
+          });
       }
-      
-      function initCarInputWebSocket() 
-      {
-        websocketCarInput = new WebSocket(webSocketCarInputUrl);
-        websocketCarInput.onopen    = function(event)
-        {
-          var speedButton = document.getElementById("Speed");
-          sendButtonInput("Speed", speedButton.value);
-          var lightButton = document.getElementById("Light");
-          sendButtonInput("Light", lightButton.value);
-        };
-        websocketCarInput.onclose   = function(event){setTimeout(initCarInputWebSocket, 2000);};
-        websocketCarInput.onmessage = function(event){};        
-      }
-      
-      function initWebSocket() 
-      {
-        initCameraWebSocket ();
-        initCarInputWebSocket();
-      }
-
-      function sendButtonInput(key, value) 
-      {
-        var data = key + "," + value;
-        websocketCarInput.send(data);
-      }
-    
-      window.onload = initWebSocket;
-      document.getElementById("mainTable").addEventListener("touchend", function(event){
-        event.preventDefault()
-      });      
     </script>
-  </body>    
+  </body>
 </html>
