@@ -44,7 +44,7 @@ while not ap.active():
     sleep_ms(1000)
 if ap.active():
     for i in range(10):
-        led2.value(not led.value())
+        led2.value(not led2.value())
         sleep_ms(50)
 
 print("✅ AP active! IP:", ap.ifconfig()[0])
@@ -54,7 +54,7 @@ sleep_ms(2000)
 def web_page():
     return """<!DOCTYPE html>
     <html>
-    <head><title>Insect Monitor</title>
+    <head><title>Camera Monitor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: Arial; text-align: center; margin-top: 30px; }

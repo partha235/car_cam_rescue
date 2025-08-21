@@ -6,11 +6,10 @@
 #include "soc/rtc_cntl_reg.h"
 
 // ====== USER CONFIG ======
-const char *ssid = "bps_wifi";
-const char *password = "sagabps@235";    // Replace with your WiFi network password
+const char* ssid = "bps_wifi";           // Your WiFi network SSID
+const char* password = "sagabps@235";    // Your WiFi network password
 const int ledPin = 4;                    // Onboard flash LED (GPIO 4)
 const int defaultFPS = 5;                // Default streaming frame rate (FPS)
-
 
 // ====== CAMERA PINS (AI-Thinker ESP32-CAM) ======
 #define PWDN_GPIO_NUM     32
@@ -82,39 +81,71 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000; // 10MHz for stability
-  config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA; // 320x240 for stability
-  config.jpeg_quality = 20;           // Reduced for lower memory usage
-  config.fb_count = 1;                // Single buffer to save memory
+  config.xclk_freq_hz = 20000000;
+  config.frame_size = FRAMESIZE_UXGA;
+  config.pixel_format = PIXFORMAT_JPEG;  // for streaming
+  //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
 
-  if (!psramFound()) {
-    Serial.println("No PSRAM found, using DRAM");
-    config.fb_location = CAMERA_FB_IN_DRAM;
+ // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
+  //                      for larger pre-allocated frame buffer.
+  if (config.pixel_format == PIXFORMAT_JPEG) {
+    if (psramFound()) {
+      config.jpeg_quality = 10;
+      config.fb_count = 2;
+      config.grab_mode = CAMERA_GRAB_LATEST;
+    } else {
+      // Limit the frame size when PSRAM is not available
+      config.frame_size = FRAMESIZE_SVGA;
+      config.fb_location = CAMERA_FB_IN_DRAM;
+    }
   } else {
-    Serial.println("PSRAM found");
-  }
-
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x\n", err);
-    return false;
-  }
-
-  sensor_t *s = esp_camera_sensor_get();
-  if (s->id.PID == OV3660_PID) {
-    Serial.println("OV3660 sensor detected, applying settings");
-    s->set_vflip(s, 1);      // Flip vertically
-    s->set_brightness(s, 1); // Increase brightness
-    s->set_saturation(s, -2); // Lower saturation
-  } else {
-    Serial.printf("Sensor PID: 0x%x detected\n", s->id.PID);
-  }
-  s->set_framesize(s, FRAMESIZE_QVGA); // Ensure QVGA resolution
-  Serial.println("Camera initialized successfully");
-  return true;
+    // Best option for face detection/recognition
+    config.frame_size = FRAMESIZE_240X240;
+    #if CONFIG_IDF_TARGET_ESP32S3
+        config.fb_count = 2;
+    #endif
+      }
+    
+    #if defined(CAMERA_MODEL_ESP_EYE)
+      pinMode(13, INPUT_PULLUP);
+      pinMode(14, INPUT_PULLUP);
+    #endif
+    
+      // camera init
+      esp_err_t err = esp_camera_init(&config);
+      if (err != ESP_OK) {
+        Serial.printf("Camera init failed with error 0x%x", err);
+        // return;
+      }
+    
+      sensor_t *s = esp_camera_sensor_get();
+      // initial sensors are flipped vertically and colors are a bit saturated
+      if (s->id.PID == OV3660_PID) {
+        s->set_vflip(s, 1);        // flip it back
+        s->set_brightness(s, 1);   // up the brightness just a bit
+        s->set_saturation(s, -2);  // lower the saturation
+      }
+      // drop down frame size for higher initial frame rate
+      if (config.pixel_format == PIXFORMAT_JPEG) {
+        s->set_framesize(s, FRAMESIZE_QVGA);
+      }
+    
+    #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
+      s->set_vflip(s, 1);
+      s->set_hmirror(s, 1);
+    #endif
+    #if defined(CAMERA_MODEL_ESP32S3_EYE)
+      s->set_vflip(s, 1);
+    #endif
+        
+    // Setup LED FLash if LED pin is defined in camera_pins.h
+    #if defined(LED_GPIO_NUM)
+      setupLedFlash();
+    #endif
 }
 
 // ====== LED INITIALIZATION ======
@@ -186,6 +217,8 @@ static esp_err_t stream_handler(httpd_req_t *req) {
   esp_err_t res = ESP_OK;
   char part_buf[64];
   int fps = defaultFPS;
+  unsigned long lastFrameTime = millis();
+  const unsigned long streamTimeout = 30000; // 30s timeout for stream inactivity
 
   // Parse FPS from query string, if provided
   char query[32];
@@ -213,15 +246,43 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
+  int retryCount = 0;
+  const int maxRetries = 3; // Retry camera capture up to 3 times
   while (true) {
-    fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("Failed to capture frame");
+    if (millis() - lastFrameTime > streamTimeout) {
+      Serial.println("Stream timed out");
       httpd_resp_set_status(req, "500 Internal Server Error");
-      httpd_resp_sendstr(req, "Failed to capture frame");
+      httpd_resp_sendstr(req, "Stream timed out");
       res = ESP_FAIL;
       break;
     }
+
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Failed to capture frame");
+      retryCount++;
+      if (retryCount >= maxRetries) {
+        Serial.println("Max retries reached, giving up");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "Failed to capture frame");
+        res = ESP_FAIL;
+        break;
+      }
+      // Attempt to reinitialize camera
+      Serial.println("Reinitializing camera...");
+      esp_camera_deinit();
+      if (!initCamera()) {
+        Serial.println("Camera reinitialization failed");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "Camera reinitialization failed");
+        res = ESP_FAIL;
+        break;
+      }
+      continue;
+    }
+    retryCount = 0; // Reset retry count on successful capture
+    lastFrameTime = millis(); // Update last frame time
+
     if (fb->format != PIXFORMAT_JPEG) {
       Serial.println("Non-JPEG frame format");
       esp_camera_fb_return(fb);
@@ -333,16 +394,6 @@ void setup() {
   // Connect to WiFi in Station mode
   Serial.println("Connecting to WiFi...");
   WiFi.mode(WIFI_STA);
-  // Optional: Configure static IP (uncomment to use)
-  // if (!WiFi.config(local_IP, gateway, subnet)) {
-  //   Serial.println("Static IP configuration failed");
-  //   while (true) {
-  //     digitalWrite(LED_GPIO_NUM, HIGH);
-  //     delay(250);
-  //     digitalWrite(LED_GPIO_NUM, LOW);
-  //     delay(250); // Blink for IP config failure
-  //   }
-  // }
   WiFi.begin(ssid, password);
 
   // Wait for connection with timeout
@@ -366,6 +417,8 @@ void setup() {
   Serial.println("");
   Serial.print("Connected to WiFi, IP: ");
   Serial.println(WiFi.localIP());
+  Serial.print("WiFi Signal Strength (RSSI): ");
+  Serial.println(WiFi.RSSI());
 
   // Start server
   startCameraServer();
@@ -374,5 +427,21 @@ void setup() {
 
 // ====== LOOP ======
 void loop() {
-  delay(10000); // Minimal loop to keep system responsive
+  // Monitor WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected, attempting to reconnect...");
+    WiFi.reconnect();
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Reconnected to WiFi, IP: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("Reconnection failed");
+    }
+  }
+  delay(10000); // Check every 10 seconds
 }
