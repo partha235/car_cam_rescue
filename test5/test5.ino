@@ -6,8 +6,8 @@
 #include "soc/rtc_cntl_reg.h"
 
 // ====== USER CONFIG ======
-const char* ssid = "bps_wifi";           // Your WiFi network SSID
-const char* password = "sagabps@235";    // Your WiFi network password
+const char* ssid = "******";           // Your WiFi network SSID
+const char* password = "*********";    // Your WiFi network password
 const int ledPin = 4;                    // Onboard flash LED (GPIO 4)
 const int defaultFPS = 5;                // Default streaming frame rate (FPS)
 
